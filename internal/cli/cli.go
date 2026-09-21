@@ -80,6 +80,7 @@ func Parse() {
 	cfg := config.NewConfigParser()
 
 	if flagConfigFile != "" {
+		config.SetConfigFilePath(flagConfigFile)
 		config.Opts, err = cfg.ParseFile(flagConfigFile)
 		if err != nil {
 			printErrorAndExit(err)
@@ -164,6 +165,23 @@ func Parse() {
 		printErrorAndExit(fmt.Errorf("unable to connect to database: %v", err))
 	}
 	defer db.Close()
+
+	// Reapply the connection pool settings whenever the configuration is
+	// reloaded (e.g. after SIGHUP) so that options like DATABASE_MAX_CONNS
+	// take effect without restarting the process.
+	config.OnConfigChange(func() {
+		database.ConfigureConnectionPool(
+			db,
+			config.Opts.DatabaseMinConns(),
+			config.Opts.DatabaseMaxConns(),
+			config.Opts.DatabaseConnectionLifetime(),
+		)
+		slog.Info("Database connection pool reconfigured after configuration reload",
+			slog.Int("min_conns", config.Opts.DatabaseMinConns()),
+			slog.Int("max_conns", config.Opts.DatabaseMaxConns()),
+			slog.Duration("connection_lifetime", config.Opts.DatabaseConnectionLifetime()),
+		)
+	})
 
 	store := storage.NewStorage(db)
 

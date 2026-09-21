@@ -27,6 +27,19 @@ func startDaemon(store *storage.Storage) {
 	signal.Notify(stop, os.Interrupt)
 	signal.Notify(stop, syscall.SIGTERM)
 
+	reload := make(chan os.Signal, 1)
+	signal.Notify(reload, syscall.SIGHUP)
+	go func() {
+		for range reload {
+			slog.Info("Received SIGHUP, reloading configuration")
+			if err := config.Reload(); err != nil {
+				slog.Error("Unable to reload configuration", slog.Any("error", err))
+				continue
+			}
+			slog.Info("Configuration reloaded successfully")
+		}
+	}()
+
 	pool := worker.NewPool(store, config.Opts.WorkerPoolSize())
 
 	if config.Opts.HasSchedulerService() && !config.Opts.HasMaintenanceMode() {
@@ -61,8 +74,22 @@ func startDaemon(store *storage.Storage) {
 					return
 				}
 
+				// Reuse a single dedicated connection for watchdog pings
+				// instead of acquiring a new pooled connection on every
+				// watchdog interval.
+				pinger, err := store.NewConnectionPinger(context.Background())
+				if err != nil {
+					slog.Error("Unable to acquire a dedicated database connection for the watchdog", slog.Any("error", err))
+					return
+				}
+				defer pinger.Close()
+
 				for {
-					if err := store.Ping(); err != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), interval/3)
+					err := pinger.Ping(ctx)
+					cancel()
+
+					if err != nil {
 						slog.Error("Unable to ping database", slog.Any("error", err))
 					} else {
 						systemd.SdNotify(systemd.SdNotifyWatchdog)

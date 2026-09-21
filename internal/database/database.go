@@ -7,10 +7,19 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+
+	"miniflux.app/v2/internal/config"
 )
 
 // Migrate executes database migrations.
 func Migrate(db *sql.DB) error {
+	// Make sure the connection pool used for migrations is bounded instead
+	// of relying on the PostgreSQL driver defaults, otherwise the number of
+	// open connections can be exhausted under high concurrency.
+	if config.Opts != nil {
+		ConfigureConnectionPool(db, config.Opts.DatabaseMinConns(), config.Opts.DatabaseMaxConns(), config.Opts.DatabaseConnectionLifetime())
+	}
+
 	var currentVersion int
 	db.QueryRow(`SELECT version FROM schema_version`).Scan(&currentVersion)
 

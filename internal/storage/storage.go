@@ -38,6 +38,34 @@ func (s *Storage) Ping() error {
 	return s.db.PingContext(ctx)
 }
 
+// ConnectionPinger reuses a single dedicated database connection to perform
+// repeated health checks without acquiring a new pooled connection and
+// creating a new timeout context on every check.
+type ConnectionPinger struct {
+	conn *sql.Conn
+}
+
+// NewConnectionPinger acquires a dedicated connection from the pool that can
+// be reused for repeated ping checks (e.g. the systemd watchdog).
+func (s *Storage) NewConnectionPinger(ctx context.Context) (*ConnectionPinger, error) {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ConnectionPinger{conn: conn}, nil
+}
+
+// Ping checks if the database connection works using the dedicated connection.
+func (p *ConnectionPinger) Ping(ctx context.Context) error {
+	return p.conn.PingContext(ctx)
+}
+
+// Close returns the dedicated connection to the pool.
+func (p *ConnectionPinger) Close() error {
+	return p.conn.Close()
+}
+
 // DBStats returns database statistics.
 func (s *Storage) DBStats() sql.DBStats {
 	return s.db.Stats()

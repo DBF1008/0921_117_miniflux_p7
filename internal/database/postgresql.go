@@ -17,9 +17,16 @@ func NewConnectionPool(dsn string, minConnections, maxConnections int, connectio
 		return nil, err
 	}
 
+	ConfigureConnectionPool(db, minConnections, maxConnections, connectionLifetime)
+
+	return db, nil
+}
+
+// ConfigureConnectionPool applies connection pool settings to an existing
+// database handle. It can be called at runtime to apply updated settings
+// without rebuilding the pool.
+func ConfigureConnectionPool(db *sql.DB, minConnections, maxConnections int, connectionLifetime time.Duration) {
 	db.SetMaxOpenConns(maxConnections)
 	db.SetMaxIdleConns(minConnections)
 	db.SetConnMaxLifetime(connectionLifetime)
-
-	return db, nil
 }
