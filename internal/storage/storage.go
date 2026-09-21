@@ -35,6 +35,13 @@ func (s *Storage) Ping() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	return s.PingContext(ctx)
+}
+
+// PingContext checks if the database connection works using the provided
+// context. It allows callers (e.g. the systemd watchdog) to reuse a shared
+// context instead of allocating a new timeout context on every call.
+func (s *Storage) PingContext(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 

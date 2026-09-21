@@ -165,6 +165,24 @@ func Parse() {
 	}
 	defer db.Close()
 
+	// Reconfigure the database connection pool when the configuration is
+	// reloaded at runtime (e.g. after a SIGHUP), so that changes to
+	// DATABASE_MIN_CONNS, DATABASE_MAX_CONNS and DATABASE_CONNECTION_LIFETIME
+	// take effect without restarting the process.
+	config.OnReload(func() {
+		slog.Info("Applying reloaded database connection pool settings",
+			slog.Int("min_connections", config.Opts.DatabaseMinConns()),
+			slog.Int("max_connections", config.Opts.DatabaseMaxConns()),
+			slog.Duration("connection_lifetime", config.Opts.DatabaseConnectionLifetime()),
+		)
+		database.ConfigureConnectionPool(
+			db,
+			config.Opts.DatabaseMinConns(),
+			config.Opts.DatabaseMaxConns(),
+			config.Opts.DatabaseConnectionLifetime(),
+		)
+	})
+
 	store := storage.NewStorage(db)
 
 	if err := store.Ping(); err != nil {
@@ -217,6 +235,15 @@ func Parse() {
 		if err := database.Migrate(db); err != nil {
 			printErrorAndExit(err)
 		}
+
+		// Migrations serialize the pool on a single connection; restore the
+		// configured pool settings before starting the daemon.
+		database.ConfigureConnectionPool(
+			db,
+			config.Opts.DatabaseMinConns(),
+			config.Opts.DatabaseMaxConns(),
+			config.Opts.DatabaseConnectionLifetime(),
+		)
 	}
 
 	if err := database.IsSchemaUpToDate(db); err != nil {

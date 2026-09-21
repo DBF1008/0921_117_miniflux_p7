@@ -7,10 +7,32 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"time"
 )
+
+// ConfigureConnectionPool applies connection pool settings to an existing
+// database handle. It can be called at runtime to adjust the pool without
+// rebuilding it: database/sql applies the new limits to subsequent
+// connection acquisitions.
+func ConfigureConnectionPool(db *sql.DB, minConnections, maxConnections int, connectionLifetime time.Duration) {
+	db.SetMaxOpenConns(maxConnections)
+	db.SetMaxIdleConns(minConnections)
+	db.SetConnMaxLifetime(connectionLifetime)
+
+	slog.Debug("Database connection pool configured",
+		slog.Int("min_connections", minConnections),
+		slog.Int("max_connections", maxConnections),
+		slog.Duration("connection_lifetime", connectionLifetime),
+	)
+}
 
 // Migrate executes database migrations.
 func Migrate(db *sql.DB) error {
+	// Serialize migrations on a single connection to avoid exhausting the
+	// connection pool and to prevent concurrent migration transactions.
+	db.SetMaxOpenConns(1)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
 	var currentVersion int
 	db.QueryRow(`SELECT version FROM schema_version`).Scan(&currentVersion)
 

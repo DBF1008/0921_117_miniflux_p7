@@ -27,6 +27,20 @@ func startDaemon(store *storage.Storage) {
 	signal.Notify(stop, os.Interrupt)
 	signal.Notify(stop, syscall.SIGTERM)
 
+	// Reload the configuration when SIGHUP is received. Registered reload
+	// callbacks (e.g. the database connection pool) are notified by
+	// config.Reload().
+	reload := make(chan os.Signal, 1)
+	signal.Notify(reload, syscall.SIGHUP)
+	go func() {
+		for range reload {
+			slog.Info("Received SIGHUP, reloading configuration")
+			if err := config.Reload(); err != nil {
+				slog.Error("Unable to reload configuration", slog.Any("error", err))
+			}
+		}
+	}()
+
 	pool := worker.NewPool(store, config.Opts.WorkerPoolSize())
 
 	if config.Opts.HasSchedulerService() && !config.Opts.HasMaintenanceMode() {
@@ -54,6 +68,9 @@ func startDaemon(store *storage.Storage) {
 		if config.Opts.HasWatchdog() && systemd.HasSystemdWatchdog() {
 			slog.Debug("Activating Systemd watchdog")
 
+			watchdogCtx, cancelWatchdog := context.WithCancel(context.Background())
+			defer cancelWatchdog()
+
 			go func() {
 				interval, err := systemd.WatchdogInterval()
 				if err != nil {
@@ -61,14 +78,22 @@ func startDaemon(store *storage.Storage) {
 					return
 				}
 
-				for {
-					if err := store.Ping(); err != nil {
-						slog.Error("Unable to ping database", slog.Any("error", err))
-					} else {
-						systemd.SdNotify(systemd.SdNotifyWatchdog)
-					}
+				ticker := time.NewTicker(interval / 3)
+				defer ticker.Stop()
 
-					time.Sleep(interval / 3)
+				for {
+					select {
+					case <-watchdogCtx.Done():
+						return
+					case <-ticker.C:
+						// Reuse the shared watchdog context instead of
+						// allocating a new timeout context on every ping.
+						if err := store.PingContext(watchdogCtx); err != nil {
+							slog.Error("Unable to ping database", slog.Any("error", err))
+						} else {
+							systemd.SdNotify(systemd.SdNotifyWatchdog)
+						}
+					}
 				}
 			}()
 		}

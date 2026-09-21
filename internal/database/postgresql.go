@@ -17,9 +17,7 @@ func NewConnectionPool(dsn string, minConnections, maxConnections int, connectio
 		return nil, err
 	}
 
-	db.SetMaxOpenConns(maxConnections)
-	db.SetMaxIdleConns(minConnections)
-	db.SetConnMaxLifetime(connectionLifetime)
+	ConfigureConnectionPool(db, minConnections, maxConnections, connectionLifetime)
 
 	return db, nil
 }
